@@ -1,68 +1,168 @@
 ﻿@page "/"
 @using H4SoftwareTest.Codes
-@* @attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "AuthenticatedUser")] *@
+@using Newtonsoft.Json
 
-@inject AuthenticationStateProvider _authenticationStateProvider;
-@* @inject RoleHandler _roleHandler; *@
-@inject IServiceProvider _serviceProvider;
+@rendermode InteractiveServer
+
+
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "AuthenticatedUser")]
+@inject AuthenticationStateProvider _authenticationStateProvider
+@inject Models.TodoContext _toDoContext
+@inject Codes.HashingHandler _hashHandler
+@inject Codes.EncryptionHandler _encryptionHandler
+@inject HttpClient _httpClient
 
 <PageTitle>Home</PageTitle>
 
+<h3 style="text-align:center;margin-top:10px;">User: @UserName</h3>
+<hr />
 
-
-    <h1>Hello, world!</h1>
-
-
-@* <AuthorizeView>
-    <Authorized>
-        <h1>Hello, world!</h1>
-
-        Welcome to your new app.
-    </Authorized>
-    <NotAuthorized>
-        Log in to view this page
-    </NotAuthorized>
-</AuthorizeView> *@
-
-
-@* @if (_isAuthenticated)
+@if (CprFromDB == null)
 {
-    <div>
-        <h1>Hello, world!</h1>
-        Welcome to your new app.
+    <div class="col-md-2" style="margin:0 auto;padding-left:20px;">
+        <div>Indtast dit cpr-nr:</div>
+        <input type="text" @bind="CprNr" style="width:150px;" />
+        <br />
+        <button class="btn-primary" @onclick="btnSubmitCpr" style=" width:150px;height:45px;margin-top:4px;">Submit</button>
+        @if (CprMessage != null)
+        {
+            <div>@CprMessage</div>
+        }
     </div>
-
-    @if (_isAdmin)
-    {
-        <div>You are Admin.</div>
-    }
-    else
-    {
-        <div>You are not admin currently.</div>
-    }
 }
 else
 {
-    <div>
-        You must log in to view this page...
+    <div style="text-align:center;">Dit cpr-nr: @CprFromDB</div>
+    <div class="col-md-2" style="margin:0 auto;padding-left:20px;">
+        <div style="margin-top:20px;">Indtast todo:</div>
+        <input type="text" @bind="ToDoItem" style="width:150px;" />
+        <br />
+        <button class="btn-primary" @onclick="btnSubmitTodoItem" style="width:150px;height:45px;margin-top:4px;">Submit</button>
+        @if (Message != null)
+        {
+            <div>@Message</div>
+        }
     </div>
-} *@
+}
 
- 
-@code{
-    // might be better for us students
-    public bool _isAuthenticated;
-    private bool _isAdmin;
+<div style="margin-top:18px;">
+    @if (TodoList != null && TodoList.Count > 0)
+    {
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>My todo List</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (TodoList != null && TodoList.Count > 0)
+                {
+                    @foreach (var item in TodoList)
+                    {
+                        <tr>
+                            <td>@_encryptionHandler.DecryptAsymetrisc(@item.Item)</td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private string? UserName { get; set; }
+    private string? CprNr { get; set; }
+    private string? CprFromDB { get; set; }
+    private string? ToDoItem { get; set; } = "";
+    private List<Models.Todolist>? TodoList { get; set; } = new List<Models.Todolist>();
+    private string? Message { get; set; }
+    private string? CprMessage { get; set; }
 
     protected override async Task OnInitializedAsync()
     {
-
         var authState = await _authenticationStateProvider.GetAuthenticationStateAsync();
         var user = authState.User;
-        _isAuthenticated = user.Identity.IsAuthenticated;
-        _isAdmin = user.IsInRole("Admin");
 
-        // if(_isAuthenticated)
-        // await _roleHandler.CreateUserRolesAsync(user.Identity.Name, "Admin", _serviceProvider);
+        UserName = user.Identity.Name;
+
+        bool isAuthenticated = user.Identity.IsAuthenticated;
+        bool isAuthorized = user.IsInRole("Admin");
+
+
+        string txtToEncrypt = "køb mælk";
+        string encryptedValue = _encryptionHandler.EncryptAsymetrisc(txtToEncrypt);
+        string decryptValue = _encryptionHandler.DecryptAsymetrisc(encryptedValue);
+
+
+
+        // string txtToHash = "Køb mælk";
+
+        // string encryptValue = _encryptionHandler.EncryptSymetrics(txtToHash);
+        // string decryptValue = _encryptionHandler.DecryptSymetrics(encryptValue);
+
+
+    }
+
+    private void btnSubmitCpr()
+    {
+        string cprHashed = _hashHandler.BCryptHashing(CprNr);
+
+        var matchedUser = _toDoContext.Cprs.FirstOrDefault(x => x.User == UserName);
+
+        if (matchedUser == null)
+        {
+            var newCpr = new Models.Cpr
+            {
+                User = UserName,
+                CprNr = cprHashed
+            };
+
+            _toDoContext.Cprs.Add(newCpr);
+            _toDoContext.SaveChanges();
+
+            CprFromDB = newCpr.CprNr;
+        }
+        else
+        {
+            bool hashedValueMatch = _hashHandler.BCryptHashingVerify(CprNr, matchedUser.CprNr);
+            if (hashedValueMatch)
+            {
+                TodoList = _toDoContext.Todolists.Where(x => x.UserId == UserName).ToList();
+                CprFromDB = matchedUser.CprNr;
+                CprMessage = null;
+            }
+            else
+            {
+                CprMessage = "CPR-NR er forkert";
+            }
+        }
+    }
+
+    private void btnSubmitTodoItem()
+    {
+        // Check if the list has changed
+        HashSet<int> hashSet2 = new HashSet<int>(TodoList.Select(item => item.GetHashCode()));
+
+        var todoListTemp = _toDoContext.Todolists.ToList();
+        todoListTemp = todoListTemp.Where(x => x.UserId == UserName).ToList();
+        HashSet<int> hashSet1 = new HashSet<int>(todoListTemp.Select(item => item.GetHashCode()));
+
+        bool areListsEqual = hashSet1.SetEquals(hashSet2);
+        if (areListsEqual)
+        {
+            var todo = new Models.Todolist
+                {
+                    UserId = UserName,
+                    Item = _encryptionHandler.EncryptAsymetrisc(ToDoItem)
+                };
+            _toDoContext.Todolists.Add(todo);
+            _toDoContext.SaveChanges();
+
+            TodoList = _toDoContext.Todolists.ToList().Where(x => x.UserId == UserName).ToList();
+        }
+        else
+        {
+            Message = "Manipulation found on db!";
+        }
     }
 }
